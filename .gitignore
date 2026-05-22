@@ -1,0 +1,16 @@
+tmp/
+components/
+managed_components/
+build/
+.vscode/
+.devcontainer/
+sdkconfig.old
+sdkconfig
+dependencies.lock
+.env
+releases/
+main/assets/lang_config.h
+main/iot/things/home_assistant_config.local.h
+.DS_Store
+build-racing/
+sdkconfig.racing

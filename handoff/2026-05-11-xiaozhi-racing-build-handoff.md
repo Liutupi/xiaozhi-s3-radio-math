@@ -1,0 +1,18 @@
+# [ad-hoc note] Xiaozhi racing firmware build handoff
+- Active project path: `C:\espbuild\xz-sfx`; build here because ESP-IDF previously failed on the original Chinese/long desktop path with Python GBK decode and ccache/filesystem errors.
+- Original package: `C:\Users\Administrator\Desktop\xiaozhi-racing-firmware-package-20260511-172351.zip`.
+- ESP-IDF root: `C:\Users\Administrator\esp-idf`; run `$env:PYTHONUTF8='1'` and `& 'C:\Users\Administrator\esp-idf\export.ps1'` before build/flash.
+- If ESP-IDF Python environment is missing, run `& 'C:\Users\Administrator\esp-idf\install.ps1' esp32s3`.
+- Successful build command from `C:\espbuild\xz-sfx`: `idf.py -B build-racing build`.
+- Successful app-only flash command: `python -m esptool --chip esp32s3 -p COM4 -b 460800 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m 0x100000 build-racing\xiaozhi.bin`.
+- Final binary: `C:\espbuild\xz-sfx\build-racing\xiaozhi.bin`; SHA256 `3598EA8B4C4D28DF8F1A3088CDD4EFAE18E47782A86B16D7916AFC304BE2D4A4`; backup `C:\Users\Administrator\Desktop\xiaozhi-racing-better-cars-app-20260511-223917.bin`.
+- Hardware: ESP32-S3 QFN56 rev v0.2, USB-Serial/JTAG, 8MB PSRAM, MAC `14:c1:9f:cb:53:60`, working port `COM4` (USB Serial Device localized in Chinese Windows, `USB\VID_303A&PID_1001&MI_00\6&2C8464CC&0&0000`).
+- Board/LCD config: `CONFIG_BOARD_TYPE_BREAD_COMPACT_WIFI_LCD=y`, `CONFIG_LCD_ST7735_128X160=y`; ST7735 128x160, mirror X/Y true, swap XY false, RGB order RGB, offsets 0, SPI mode 0.
+- Audio pins in `main\boards\bread-compact-wifi-lcd\config.h`: sample rates 16000 input and 24000 output; active duplex I2S pins WS GPIO4, BCLK GPIO5, DIN GPIO6, DOUT GPIO7.
+- Display pins: backlight GPIO42, MOSI GPIO47, CLK GPIO21, DC GPIO40, RST GPIO45, CS GPIO41; never use GPIO40 as a button because it is LCD DC.
+- Button pins: BOOT GPIO0, volume down/right-side lower key GPIO39, volume up NC.
+- Current controls: long BOOT enters/exits racing, BOOT click moves left or restarts after crash, BOOT double-click moves left, GPIO39 moves right.
+- Active partition table `partitions.csv`: NVS 0x9000/0x4000, otadata 0xd000/0x2000, phy_init 0xf000/0x1000, model SPIFFS 0x10000/0xF0000, ota_0 0x100000/6M, ota_1 0x700000/6M.
+- Firmware additions: racing game files `main\games\racing_game.*`, sound effect files `main\games\racing_sfx.*`, board integration in `main\boards\bread-compact-wifi-lcd\compact_wifi_board_lcd.cc`, robot dynamic UI in `main\display\lcd_display.*`.
+- Current game/UI state: racing has LVGL car sprites, neon road edges, colored lane marks, and SFX for start/move/score/crash/restart; Xiaozhi UI has a dynamic robot avatar inspired by the user image.
+- Full engineering handoff doc saved at `C:\espbuild\xz-sfx\docs\BUILD_HANDOFF_XIAOZHI_RACING.md`.
