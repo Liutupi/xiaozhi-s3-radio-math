@@ -31,8 +31,7 @@ private:
         kConnecting,
         kBuffering,
         kPlaying,
-        kHlsParsed,
-        kHlsParseFailed,
+        kHlsUnsupported,
         kError,
     };
 
@@ -45,7 +44,6 @@ private:
     void SwitchStation(int delta);
     void FlushPcmRing();
     void StopVoiceSession();
-    bool ProbeHlsPlaylist(const char* url);
 
     static void StreamTaskEntry(void* arg);
     static void PlayTaskEntry(void* arg);
