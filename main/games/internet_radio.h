@@ -76,7 +76,6 @@ private:
     lv_obj_t* name_label_ = nullptr;
     lv_obj_t* status_label_ = nullptr;
     lv_obj_t* info_label_ = nullptr;
-    lv_obj_t* boot_label_ = nullptr;
     lv_obj_t* next_label_ = nullptr;
 };
 

@@ -157,8 +157,6 @@ private:
                 launcher_labels_[i] = AddLauncherLabel(launcher_items_[i], 8, 0, display_->width() - 34, "", 0xf8fafc);
             }
 
-            AddLauncherLabel(launcher_layer_, 7, display_->height() - 18, display_->width() - 14,
-                             "BOOT enter", 0xffd166, LV_TEXT_ALIGN_CENTER);
         }
 
         lv_obj_clear_flag(launcher_layer_, LV_OBJ_FLAG_HIDDEN);
