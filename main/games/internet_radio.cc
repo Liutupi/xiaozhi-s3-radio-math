@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <string>
+#include <vector>
 
 LV_FONT_DECLARE(font_puhui_16_4);
 
@@ -18,17 +20,31 @@ namespace {
 static const char* TAG = "InternetRadio";
 
 struct RadioStation {
+    enum class StreamType : uint8_t {
+        kMp3Direct,
+        kHlsM3u8,
+    };
+
     const char* name;
     const char* url;
+    StreamType type;
 };
 
 static const RadioStation kStations[] = {
-    {"Groove Salad", "https://ice5.somafm.com/groovesalad-128-mp3"},
-    {"SomaFM Live", "https://ice5.somafm.com/live-128-mp3"},
-    {"n5MD Radio", "https://ice5.somafm.com/n5md-128-mp3"},
-    {"The In-Sound", "https://ice5.somafm.com/insound-128-mp3"},
-    {"Dark Zone", "https://ice5.somafm.com/darkzone-128-mp3"},
-    {"Mission Control", "https://ice5.somafm.com/missioncontrol-128-mp3"},
+    {"Groove Salad", "https://ice5.somafm.com/groovesalad-128-mp3", RadioStation::StreamType::kMp3Direct},
+    {"SomaFM Live", "https://ice5.somafm.com/live-128-mp3", RadioStation::StreamType::kMp3Direct},
+    {"n5MD Radio", "https://ice5.somafm.com/n5md-128-mp3", RadioStation::StreamType::kMp3Direct},
+    {"The In-Sound", "https://ice5.somafm.com/insound-128-mp3", RadioStation::StreamType::kMp3Direct},
+    {"Dark Zone", "https://ice5.somafm.com/darkzone-128-mp3", RadioStation::StreamType::kMp3Direct},
+    {"Mission Control", "https://ice5.somafm.com/missioncontrol-128-mp3", RadioStation::StreamType::kMp3Direct},
+    {"CNR 中国之声", "https://live-play.cctvnews.cctv.com/cctv/zgzs192.m3u8", RadioStation::StreamType::kHlsM3u8},
+    {"CNR 音乐之声", "http://liveop.cctv.cn/hls/yyzs192/playlist.m3u8", RadioStation::StreamType::kHlsM3u8},
+    {"CNR 文艺之声", "http://audiows010.cnr.cn/live/wyzs192/playlist.m3u8", RadioStation::StreamType::kHlsM3u8},
+    {"广东音乐之声 FM99.3", "http://live.xmcdn.com/live/74/64.m3u8", RadioStation::StreamType::kHlsM3u8},
+    {"广东新闻频道 FM91.4", "http://live.xmcdn.com/live/245/64.m3u8", RadioStation::StreamType::kHlsM3u8},
+    {"广东羊城交通 FM105.2", "http://live.xmcdn.com/live/248/64.m3u8", RadioStation::StreamType::kHlsM3u8},
+    {"广东珠江经济台 FM97.4", "http://live.xmcdn.com/live/252/64.m3u8", RadioStation::StreamType::kHlsM3u8},
+    {"广州 MYFM 88.0", "http://live.xmcdn.com/live/259/64.m3u8", RadioStation::StreamType::kHlsM3u8},
 };
 
 static constexpr int kStationCount = sizeof(kStations) / sizeof(kStations[0]);
@@ -36,6 +52,7 @@ static constexpr int kOutputRate = 24000;
 static constexpr size_t kRawBufferBytes = 16 * 1024;
 static constexpr size_t kPcmBufferBytes = 8 * 1024;
 static constexpr int kHttpReadChunk = 2048;
+static constexpr const char* kUserAgent = "Mozilla/5.0 ESP32 Radio";
 
 lv_obj_t* AddLabel(lv_obj_t* parent, int y, const char* text, uint32_t color,
                    lv_text_align_t align = LV_TEXT_ALIGN_CENTER) {
@@ -89,6 +106,61 @@ int MixToMonoAndResample(const int16_t* src, int sample_count, int channels, int
     return out_len;
 }
 
+std::string TrimLine(const std::string& line) {
+    size_t start = 0;
+    while (start < line.size() && (line[start] == ' ' || line[start] == '\t' || line[start] == '\r')) {
+        ++start;
+    }
+    size_t end = line.size();
+    while (end > start && (line[end - 1] == ' ' || line[end - 1] == '\t' || line[end - 1] == '\r')) {
+        --end;
+    }
+    return line.substr(start, end - start);
+}
+
+std::string ResolveSegmentUrl(const std::string& playlist_url, const std::string& segment) {
+    if (segment.find("http://") == 0 || segment.find("https://") == 0) {
+        return segment;
+    }
+    if (segment.find("//") == 0) {
+        const auto scheme_end = playlist_url.find("://");
+        const std::string scheme = scheme_end == std::string::npos ? "http" : playlist_url.substr(0, scheme_end);
+        return scheme + ":" + segment;
+    }
+
+    const auto scheme_end = playlist_url.find("://");
+    if (scheme_end == std::string::npos) {
+        return segment;
+    }
+    const auto host_start = scheme_end + 3;
+    const auto path_start = playlist_url.find('/', host_start);
+    const std::string origin = path_start == std::string::npos ? playlist_url : playlist_url.substr(0, path_start);
+
+    if (!segment.empty() && segment[0] == '/') {
+        return origin + segment;
+    }
+
+    const auto last_slash = playlist_url.rfind('/');
+    const std::string base = last_slash == std::string::npos ? (playlist_url + "/") : playlist_url.substr(0, last_slash + 1);
+    return base + segment;
+}
+
+std::vector<std::string> ParseSegmentUrls(const std::string& playlist_url, const std::string& playlist) {
+    std::vector<std::string> segments;
+    size_t pos = 0;
+    while (pos < playlist.size() && segments.size() < 3) {
+        const size_t line_end = playlist.find('\n', pos);
+        const std::string line = TrimLine(playlist.substr(pos, line_end == std::string::npos ? std::string::npos : line_end - pos));
+        pos = line_end == std::string::npos ? playlist.size() : line_end + 1;
+
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        segments.push_back(ResolveSegmentUrl(playlist_url, line));
+    }
+    return segments;
+}
+
 }  // namespace
 
 InternetRadio::~InternetRadio() {
@@ -119,6 +191,7 @@ void InternetRadio::Start(Display* display, AudioCodec* codec) {
     bitrate_kbps_ = 0;
     sample_rate_ = 0;
     channels_ = 0;
+    FlushPcmRing();
 
     if (ring_struct_ == nullptr) {
         ring_struct_ = static_cast<StaticRingbuffer_t*>(heap_caps_malloc(sizeof(StaticRingbuffer_t),
@@ -298,6 +371,14 @@ void InternetRadio::UpdateUi() {
             status = paused_ ? "Paused" : "Playing";
             color = paused_ ? 0xfacc15 : 0x4ade80;
             break;
+        case State::kHlsParsed:
+            status = "HLS parsed";
+            color = 0x4ade80;
+            break;
+        case State::kHlsParseFailed:
+            status = "HLS Parse Failed";
+            color = 0xef4444;
+            break;
         case State::kError:
             status = "Error";
             color = 0xef4444;
@@ -309,7 +390,13 @@ void InternetRadio::UpdateUi() {
     lv_label_set_text(status_label_, status);
 
     char info_text[40];
-    if (sample_rate_ > 0) {
+    if (state_ == State::kHlsParsed) {
+        snprintf(info_text, sizeof(info_text), "Codec not ready");
+    } else if (state_ == State::kHlsParseFailed) {
+        snprintf(info_text, sizeof(info_text), "m3u8 parse failed");
+    } else if (kStations[station_index_].type == RadioStation::StreamType::kHlsM3u8) {
+        snprintf(info_text, sizeof(info_text), "HLS m3u8 probe");
+    } else if (sample_rate_ > 0) {
         snprintf(info_text, sizeof(info_text), "%dk %s %dkbps", sample_rate_ / 1000,
                  channels_ > 1 ? "stereo" : "mono", bitrate_kbps_);
     } else {
@@ -338,6 +425,77 @@ void InternetRadio::SwitchStation(int delta) {
         esp_http_client_close(current_client_);
     }
     SetState(State::kConnecting);
+}
+
+bool InternetRadio::ProbeHlsPlaylist(const char* url) {
+    ESP_LOGI(TAG, "HLS playlist probe: %s", url);
+
+    esp_http_client_config_t config = {};
+    config.url = url;
+    config.timeout_ms = 6000;
+    config.buffer_size = 2048;
+    config.buffer_size_tx = 512;
+    config.disable_auto_redirect = false;
+    config.max_redirection_count = 3;
+    config.crt_bundle_attach = esp_crt_bundle_attach;
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (client == nullptr) {
+        ESP_LOGW(TAG, "HLS client init failed");
+        return false;
+    }
+
+    current_client_ = client;
+    esp_http_client_set_header(client, "User-Agent", kUserAgent);
+    esp_http_client_set_header(client, "Accept", "application/vnd.apple.mpegurl,application/x-mpegURL,*/*");
+
+    esp_err_t open_err = esp_http_client_open(client, 0);
+    if (open_err != ESP_OK) {
+        ESP_LOGW(TAG, "HLS open failed: %s", esp_err_to_name(open_err));
+        current_client_ = nullptr;
+        esp_http_client_cleanup(client);
+        return false;
+    }
+
+    esp_http_client_fetch_headers(client);
+    const int status_code = esp_http_client_get_status_code(client);
+    ESP_LOGI(TAG, "HLS HTTP %d: %s", status_code, url);
+    if (status_code < 200 || status_code >= 400) {
+        esp_http_client_close(client);
+        current_client_ = nullptr;
+        esp_http_client_cleanup(client);
+        return false;
+    }
+
+    std::string playlist;
+    playlist.reserve(4096);
+    char buffer[512];
+    while (running_ && !reconnect_now_ && playlist.size() < 8192) {
+        const int read = esp_http_client_read(client, buffer, sizeof(buffer));
+        if (read <= 0) {
+            break;
+        }
+        playlist.append(buffer, read);
+    }
+
+    esp_http_client_close(client);
+    current_client_ = nullptr;
+    esp_http_client_cleanup(client);
+
+    if (playlist.empty()) {
+        ESP_LOGW(TAG, "HLS playlist is empty");
+        return false;
+    }
+
+    const int preview_len = std::min<int>(playlist.size(), 500);
+    ESP_LOGI(TAG, "HLS playlist first %d bytes:\n%.*s", preview_len, preview_len, playlist.c_str());
+
+    const std::vector<std::string> segments = ParseSegmentUrls(url, playlist);
+    for (size_t i = 0; i < segments.size(); ++i) {
+        ESP_LOGI(TAG, "HLS segment %d: %s", static_cast<int>(i + 1), segments[i].c_str());
+    }
+
+    return !segments.empty();
 }
 
 void InternetRadio::FlushPcmRing() {
@@ -413,6 +571,20 @@ void InternetRadio::StreamLoop() {
         }
 
         const RadioStation& station = kStations[station_index_];
+        if (station.type == RadioStation::StreamType::kHlsM3u8) {
+            FlushPcmRing();
+            if (codec_ != nullptr) {
+                codec_->EnableOutput(false);
+            }
+            const bool parsed = ProbeHlsPlaylist(station.url);
+            SetState(parsed ? State::kHlsParsed : State::kHlsParseFailed);
+            while (running_ && !reconnect_now_) {
+                UpdateUi();
+                vTaskDelay(pdMS_TO_TICKS(500));
+            }
+            continue;
+        }
+
         esp_http_client_config_t config = {};
         config.url = station.url;
         config.timeout_ms = 4000;
@@ -429,7 +601,7 @@ void InternetRadio::StreamLoop() {
             continue;
         }
         current_client_ = client;
-        esp_http_client_set_header(client, "User-Agent", "xiaozhi-s3-network-radio/1.0");
+        esp_http_client_set_header(client, "User-Agent", kUserAgent);
         esp_http_client_set_header(client, "Icy-MetaData", "0");
 
         esp_err_t open_err = esp_http_client_open(client, 0);
