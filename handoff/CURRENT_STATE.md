@@ -45,7 +45,7 @@
 - 本次构建目录：`D:\xiaozhi-s3\build-v1`。
 - 本次 app 固件：`D:\xiaozhi-s3\build-v1\xiaozhi.bin`。
 - 固件 SHA256：`ce36eff695443cde5b85f809e683e0808d0a398939e253904db38422cb0a737d`。
-- 发布包：`D:\xiaozhi-s3\releases\xiaozhi-s3-radio-math-v1.0.0-bread-compact-wifi-lcd-20260706-231632.zip`。
+- 发布包：`D:\xiaozhi-s3\releases\xiaozhi-s3-radio-math-v1.0.0-bread-compact-wifi-lcd-20260706-231936.zip`。
 
 ## 本次烧录状态
 

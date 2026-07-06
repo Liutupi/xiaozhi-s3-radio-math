@@ -24,4 +24,4 @@
 - 已在本机使用 ESP-IDF v5.5.0 构建 v1.0.0 固件。
 - 已通过 `COM5` 烧录到 ESP32-S3 开发板。
 - 固件 SHA256：`ce36eff695443cde5b85f809e683e0808d0a398939e253904db38422cb0a737d`。
-- 发布包：`releases/xiaozhi-s3-radio-math-v1.0.0-bread-compact-wifi-lcd-20260706-231632.zip`。
+- 发布包：`releases/xiaozhi-s3-radio-math-v1.0.0-bread-compact-wifi-lcd-20260706-231936.zip`。
