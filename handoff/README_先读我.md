@@ -1,51 +1,52 @@
-# 小智赛车编译交接包
+# 小智 + 网络电台 v1.0 交接入口
 
-这个文件夹用于下次继续编译、烧录或交给其他大模型接手这个 ESP32-S3 小智赛车固件。
+这个文件夹用于下次继续开发、编译、烧录或交给其他人/AI 接手。
 
-## 文件说明
+## 当前最新状态
 
-- `docs\BUILD_HANDOFF_XIAOZHI_RACING.md`：最重要，完整硬件、GPIO、ESP-IDF、编译、烧录、避坑说明。
-- `firmware\xiaozhi-racing-app-20260511.bin`：本次成功编译出的 app 固件。
-- `firmware\xiaozhi-racing-better-cars-app-20260511-223917.bin`：桌面备份版 app 固件，内容与本次成功版本对应。
-- `memory-note\2026-05-11-xiaozhi-racing-build-handoff.md`：给 Codex/其他模型用的精简记忆条目。
-- `xiaozhi-racing-firmware-package-20260511-172351.zip`：原始固件工程包。
+先读：
 
-## 关键路径
+- `handoff/CURRENT_STATE.md`：当前项目状态、硬件、固件、烧录结果。
+- `handoff/2026-07-06-v1.0.0-xiaozhi-radio-release.md`：本次 v1.0.0 构建与烧录交接。
+- `docs/BUILD_AND_FLASH.md`：构建、烧录、打包命令。
+- `docs/TEST_CHECKLIST.md`：实机测试清单。
 
-- 当前可成功编译的工程路径：`C:\espbuild\xz-sfx`
-- ESP-IDF 路径：`C:\Users\Administrator\esp-idf`
-- 最终 app 固件路径：`C:\espbuild\xz-sfx\build-racing\xiaozhi.bin`
+## v1.0.0 范围
 
-不要从中文桌面路径直接编译，之前 ESP-IDF 在该路径下遇到过编码和 ccache/filesystem 问题。
+只保留：
 
-## 最短编译命令
+- 小智主体
+- 网络电台
 
-```powershell
-Set-Location 'C:\espbuild\xz-sfx'
-$env:PYTHONUTF8='1'
-& 'C:\Users\Administrator\esp-idf\export.ps1'
-idf.py -B build-racing build
+不包含：
+
+- 数学游戏菜单入口
+- 赛车游戏菜单入口
+
+设备菜单应只显示：
+
+```text
+1  XIAOZHI
+2  RADIO
 ```
 
-## 最短烧录命令
+## 最终固件
 
-只烧录 app 分区，保留 NVS/Wi-Fi 配置：
+- app 固件：`D:\xiaozhi-s3\build-v1\xiaozhi.bin`
+- 发布包：`D:\xiaozhi-s3\releases\xiaozhi-s3-radio-math-v1.0.0-bread-compact-wifi-lcd-20260706-231632.zip`
+- SHA256：`ce36eff695443cde5b85f809e683e0808d0a398939e253904db38422cb0a737d`
 
-```powershell
-Set-Location 'C:\espbuild\xz-sfx'
-$env:PYTHONUTF8='1'
-& 'C:\Users\Administrator\esp-idf\export.ps1' | Out-Null
-python -m esptool --chip esp32s3 -p COM4 -b 460800 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m 0x100000 build-racing\xiaozhi.bin
-```
+## 已烧录设备
 
-## 核心硬件信息
+- 串口：`COM5`
+- 芯片：ESP32-S3 QFN56 revision v0.2
+- MAC：`14:c1:9f:cb:53:60`
+- 烧录结果：成功，所有写入段均 `Hash of data verified`
 
-- 芯片：ESP32-S3
-- 串口：`COM4`
-- 板型：`CONFIG_BOARD_TYPE_BREAD_COMPACT_WIFI_LCD=y`
-- 屏幕：`CONFIG_LCD_ST7735_128X160=y`
-- BOOT 键：`GPIO0`，赛车里向左/重启
-- 右侧下面的键：`GPIO39`，赛车里向右
-- `GPIO40` 是 LCD DC，绝对不要改成按钮
+## 关键规则
 
-详细内容看 `docs\BUILD_HANDOFF_XIAOZHI_RACING.md`。
+- `GPIO40` 是 LCD DC，绝对不要改成按键。
+- `GPIO0` 是 BOOT。
+- `GPIO39` 是右侧下面按键。
+- `ota_0` app 地址是 `0x100000`。
+- 本次烧录写入 bootloader、partition table、ota data、srmodels、app，没有擦除 NVS。

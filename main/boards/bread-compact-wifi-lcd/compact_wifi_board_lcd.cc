@@ -6,7 +6,6 @@
 #include "button.h"
 #include "config.h"
 #include "games/internet_radio.h"
-#include "games/math_game.h"
 #include "iot/thing_manager.h"
 #include "led/single_led.h"
 
@@ -72,18 +71,16 @@ private:
     Button boot_button_;
     Button volume_down_button_;
     LcdDisplay* display_;
-    MathGame math_game_;
     InternetRadio internet_radio_;
     enum class LauncherMode : uint8_t {
         kMenu,
         kXiaozhi,
-        kMath,
         kRadio,
     };
     LauncherMode launcher_mode_ = LauncherMode::kMenu;
     int launcher_index_ = 0;
     lv_obj_t* launcher_layer_ = nullptr;
-    static constexpr int kLauncherItemCount = 3;
+    static constexpr int kLauncherItemCount = 2;
     lv_obj_t* launcher_items_[kLauncherItemCount] = {};
     lv_obj_t* launcher_labels_[kLauncherItemCount] = {};
 
@@ -112,10 +109,10 @@ private:
 
     void DrawLauncher() {
         static const char* kItems[] = {
-            "1  XIAOZHI", "2  MATH", "3  RADIO"
+            "1  XIAOZHI", "2  RADIO"
         };
         static const uint32_t kItemColors[] = {
-            0x1d4ed8, 0x047857, 0xd97706
+            0x1d4ed8, 0xd97706
         };
         for (int i = 0; i < kLauncherItemCount; ++i) {
             const bool active = i == launcher_index_;
@@ -131,9 +128,6 @@ private:
             return;
         }
 
-        if (math_game_.IsRunning()) {
-            math_game_.Stop();
-        }
         if (internet_radio_.IsRunning()) {
             internet_radio_.Stop();
         }
@@ -198,9 +192,6 @@ private:
         if (launcher_index_ == 0) {
             launcher_mode_ = LauncherMode::kXiaozhi;
             app.DismissAlert();
-        } else if (launcher_index_ == 1) {
-            launcher_mode_ = LauncherMode::kMath;
-            math_game_.Start(display_);
         } else {
             launcher_mode_ = LauncherMode::kRadio;
             internet_radio_.Start(display_, GetAudioCodec());
@@ -278,9 +269,6 @@ private:
                 EnterLauncherSelection();
                 return;
             }
-            if (math_game_.HandleClick()) {
-                return;
-            }
             if (internet_radio_.HandleClick()) {
                 return;
             }
@@ -294,9 +282,6 @@ private:
         boot_button_.OnDoubleClick([this]() {
             if (launcher_mode_ == LauncherMode::kMenu) {
                 MoveLauncherSelection(-1);
-                return;
-            }
-            if (math_game_.HandleDoubleClick()) {
                 return;
             }
             if (internet_radio_.HandleDoubleClick()) {
@@ -315,9 +300,6 @@ private:
         volume_down_button_.OnClick([this]() {
             if (launcher_mode_ == LauncherMode::kMenu) {
                 MoveLauncherSelection(1);
-                return;
-            }
-            if (math_game_.MoveRight()) {
                 return;
             }
             if (internet_radio_.MoveRight()) {

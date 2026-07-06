@@ -9,8 +9,10 @@ sdkconfig
 dependencies.lock
 .env
 releases/
+.esp-idf/
 main/assets/lang_config.h
 main/iot/things/home_assistant_config.local.h
 .DS_Store
 build-racing/
+build-v1/
 sdkconfig.racing
