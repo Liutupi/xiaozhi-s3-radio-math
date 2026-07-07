@@ -1,4 +1,4 @@
-#include "application.h"
+﻿#include "application.h"
 #include "board.h"
 #include "display.h"
 #include "system_info.h"
@@ -11,6 +11,8 @@
 #include "assets/lang_config.h"
 
 #include <cstring>
+#include <string>
+#include <vector>
 #include <esp_log.h>
 #include <cJSON.h>
 #include <driver/gpio.h>
@@ -21,6 +23,41 @@
 
 static const char* kWakeWordDisplayName = "多多";
 
+namespace {
+bool TextContainsAny(const std::string& text, const std::vector<const char*>& keywords) {
+    for (const auto keyword : keywords) {
+        if (text.find(keyword) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool TryHandleLocalRadioCommand(const std::string& text) {
+    const bool has_play_intent = TextContainsAny(text, {"播放", "打开", "收听", "听", "来点"});
+    const bool has_radio_target = TextContainsAny(text, {"电台", "广播", "收音机", "FM", "fm", "Radio", "radio"});
+    if (!has_play_intent || !has_radio_target) {
+        return false;
+    }
+
+    cJSON* command = cJSON_CreateObject();
+    cJSON_AddStringToObject(command, "name", "InternetRadio");
+    const bool generic_radio_command = TextContainsAny(text, {"播放电台", "打开电台", "收听电台", "播放广播", "打开广播", "听电台"});
+    if (generic_radio_command) {
+        cJSON_AddStringToObject(command, "method", "Play");
+    } else {
+        cJSON_AddStringToObject(command, "method", "PlayStation");
+        cJSON* parameters = cJSON_CreateObject();
+        cJSON_AddStringToObject(parameters, "station_name", text.c_str());
+        cJSON_AddItemToObject(command, "parameters", parameters);
+    }
+
+    auto& thing_manager = iot::ThingManager::GetInstance();
+    thing_manager.Invoke(command);
+    cJSON_Delete(command);
+    return true;
+}
+}  // namespace
 static const char* const STATE_STRINGS[] = {
     "unknown",
     "starting",
@@ -436,6 +473,15 @@ void Application::Start() {
             auto text = cJSON_GetObjectItem(root, "text");
             if (text != NULL) {
                 ESP_LOGI(TAG, ">> %s", text->valuestring);
+                const bool local_radio_command = TryHandleLocalRadioCommand(text->valuestring);
+                if (local_radio_command) {
+                    Schedule([this]() {
+                        if (protocol_ != nullptr && protocol_->IsAudioChannelOpened()) {
+                            AbortSpeaking(kAbortReasonNone);
+                            protocol_->CloseAudioChannel();
+                        }
+                    });
+                }
                 Schedule([this, display, message = std::string(text->valuestring)]() {
                     display->SetChatMessage("user", message.c_str());
                 });
@@ -613,17 +659,9 @@ void Application::ResetDecoder() {
 void Application::OutputAudio() {
     auto now = std::chrono::steady_clock::now();
     auto codec = Board::GetInstance().GetAudioCodec();
-    const int max_silence_seconds = 10;
 
     std::unique_lock<std::mutex> lock(mutex_);
     if (audio_decode_queue_.empty()) {
-        // Disable the output if there is no audio data for a long time
-        if (device_state_ == kDeviceStateIdle) {
-            auto duration = std::chrono::duration_cast<std::chrono::seconds>(now - last_output_time_).count();
-            if (duration > max_silence_seconds) {
-                codec->EnableOutput(false);
-            }
-        }
         return;
     }
 
@@ -765,6 +803,7 @@ void Application::SetDeviceState(DeviceState state) {
             break;
         case kDeviceStateSpeaking:
             display->SetStatus(Lang::Strings::SPEAKING);
+            display->SetEmotion("speaking");
             ResetDecoder();
             codec->EnableOutput(true);
 #if CONFIG_USE_AUDIO_PROCESSOR

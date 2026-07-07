@@ -43,7 +43,7 @@ $manifest = [ordered]@{
     build_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssK")
     commit = $commit
     sha256 = $hash
-    preserved_features = @("xiaozhi", "internet_radio")
+    preserved_features = @("xiaozhi", "internet_radio", "settings", "animated_face", "music_player")
 }
 
 $manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 (Join-Path $stageDir "manifest.json")
@@ -65,14 +65,15 @@ python -m esptool --chip $Chip -p `$Port -b 460800 --before default_reset --afte
 
 - Xiaozhi assistant
 - Internet radio
+- Settings screen
+- Animated minimal face
+- MusicPlayer.PlayUrl for direct MP3 URLs returned by music MCP services
 
 ## Flash
 
 Use app-only flashing to preserve NVS/Wi-Fi settings.
 
-```powershell
-.\flash_app_only.ps1 -Port COM4
-```
+    .\flash_app_only.ps1 -Port COM4
 
 If the device is not on COM4, replace it with the actual serial port.
 

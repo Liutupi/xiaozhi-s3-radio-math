@@ -20,19 +20,13 @@ protected:
     lv_obj_t* container_ = nullptr;
     lv_obj_t* side_bar_ = nullptr;
     lv_obj_t* robot_avatar_ = nullptr;
-    lv_obj_t* robot_head_ = nullptr;
-    lv_obj_t* robot_screen_ = nullptr;
-    lv_obj_t* robot_band_ = nullptr;
-    lv_obj_t* robot_left_ear_ = nullptr;
-    lv_obj_t* robot_right_ear_ = nullptr;
     lv_obj_t* robot_left_eye_ = nullptr;
     lv_obj_t* robot_right_eye_ = nullptr;
-    lv_obj_t* robot_left_brow_ = nullptr;
-    lv_obj_t* robot_right_brow_ = nullptr;
     lv_obj_t* robot_mouth_ = nullptr;
-    lv_obj_t* robot_badge_label_ = nullptr;
+    esp_timer_handle_t robot_timer_ = nullptr;
     int robot_phase_ = 0;
-    const char* robot_emotion_ = "neutral";
+    bool robot_speaking_ = false;
+    std::string robot_emotion_ = "neutral";
 
     DisplayFonts fonts_;
 
@@ -52,6 +46,7 @@ protected:
 public:
     ~LcdDisplay();
     virtual void SetEmotion(const char* emotion) override;
+    virtual void SetChatMessage(const char* role, const char* content) override;
     virtual void SetIcon(const char* icon) override;
 };
 

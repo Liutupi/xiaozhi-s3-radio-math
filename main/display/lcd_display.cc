@@ -1,5 +1,6 @@
-#include "lcd_display.h"
+﻿#include "lcd_display.h"
 
+#include <algorithm>
 #include <vector>
 #include <font_awesome_symbols.h>
 #include <esp_log.h>
@@ -39,13 +40,6 @@ void StyleNoBg(lv_obj_t* obj) {
     lv_obj_set_style_pad_all(obj, 0, 0);
 }
 
-lv_obj_t* CreateBar(lv_obj_t* parent, int x, int y, int w, int h, lv_color_t color) {
-    lv_obj_t* bar = lv_obj_create(parent);
-    lv_obj_set_size(bar, w, h);
-    lv_obj_set_pos(bar, x, y);
-    StyleBox(bar, color, color, 0, 1);
-    return bar;
-}
 }  // namespace
 
 SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
@@ -174,7 +168,13 @@ RgbLcdDisplay::RgbLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
 }
 
 LcdDisplay::~LcdDisplay() {
-    // 然后再清理 LVGL 对象
+    if (robot_timer_ != nullptr) {
+        esp_timer_stop(robot_timer_);
+        esp_timer_delete(robot_timer_);
+        robot_timer_ = nullptr;
+    }
+
+    // 然后再清�?LVGL 对象
     if (content_ != nullptr) {
         lv_obj_del(content_);
     }
@@ -240,12 +240,11 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_bg_color(content_, lv_color_hex(0x08111f), 0);
     lv_obj_set_style_border_width(content_, 0, 0);
 
-    lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_COLUMN); // 垂直布局（从上到下）
-    lv_obj_set_flex_align(content_, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_SPACE_EVENLY); // 子对象居中对齐，等距分布
+    lv_obj_set_layout(content_, LV_LAYOUT_NONE);
 
     CreateRobotAvatar();
 
-    emotion_label_ = lv_label_create(content_);
+    emotion_label_ = lv_label_create(lv_screen_active());
     lv_obj_set_style_text_font(emotion_label_, &font_awesome_30_4, 0);
     lv_label_set_text(emotion_label_, "");
     lv_obj_add_flag(emotion_label_, LV_OBJ_FLAG_HIDDEN);
@@ -253,9 +252,13 @@ void LcdDisplay::SetupUI() {
     chat_message_label_ = lv_label_create(content_);
     lv_label_set_text(chat_message_label_, "");
     lv_obj_set_style_text_color(chat_message_label_, lv_color_hex(0xb9f7ff), 0);
-    lv_obj_set_width(chat_message_label_, LV_HOR_RES * 0.9); // 限制宽度为屏幕宽度的 90%
-    lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_WRAP); // 设置为自动换行模式
+    lv_obj_set_width(chat_message_label_, LV_HOR_RES * 0.92);
+    lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_WRAP); // 设置为自动换行模�?
     lv_obj_set_style_text_align(chat_message_label_, LV_TEXT_ALIGN_CENTER, 0); // 设置文本居中对齐
+    lv_obj_set_style_bg_color(chat_message_label_, lv_color_hex(0x08111f), 0);
+    lv_obj_set_style_bg_opa(chat_message_label_, LV_OPA_80, 0);
+    lv_obj_set_style_pad_all(chat_message_label_, 2, 0);
+    lv_obj_align(chat_message_label_, LV_ALIGN_BOTTOM_MID, 0, -4);
 
     /* Status bar */
     lv_obj_set_flex_flow(status_bar_, LV_FLEX_FLOW_ROW);
@@ -303,181 +306,62 @@ void LcdDisplay::SetupUI() {
 
 void LcdDisplay::CreateRobotAvatar() {
     robot_avatar_ = lv_obj_create(content_);
-    lv_obj_set_size(robot_avatar_, 118, 100);
+    const int avatar_width = std::clamp(width_ * 92 / 100, 150, 300);
+    const int available_height = height_ - static_cast<int>(fonts_.text_font->line_height);
+    const int avatar_height = std::clamp(available_height * 62 / 100, 120, 250);
+    lv_obj_set_size(robot_avatar_, avatar_width, avatar_height);
+    lv_obj_align(robot_avatar_, LV_ALIGN_CENTER, 0, -10);
     StyleNoBg(robot_avatar_);
 
-    robot_band_ = lv_obj_create(robot_avatar_);
-    lv_obj_set_size(robot_band_, 88, 54);
-    lv_obj_set_pos(robot_band_, 15, 0);
-    StyleBox(robot_band_, lv_color_hex(0x08111f), lv_color_hex(0x7c3cff), 4, 28);
+    robot_left_eye_ = lv_obj_create(robot_avatar_);
+    StyleBox(robot_left_eye_, lv_color_hex(0x55efff), lv_color_hex(0x55efff), 0, 24);
 
-    robot_left_ear_ = lv_obj_create(robot_avatar_);
-    lv_obj_set_size(robot_left_ear_, 24, 42);
-    lv_obj_set_pos(robot_left_ear_, 2, 33);
-    StyleBox(robot_left_ear_, lv_color_hex(0x222844), lv_color_hex(0x28e7ff), 3, 12);
+    robot_right_eye_ = lv_obj_create(robot_avatar_);
+    StyleBox(robot_right_eye_, lv_color_hex(0x55efff), lv_color_hex(0x55efff), 0, 24);
 
-    robot_right_ear_ = lv_obj_create(robot_avatar_);
-    lv_obj_set_size(robot_right_ear_, 24, 42);
-    lv_obj_set_pos(robot_right_ear_, 92, 33);
-    StyleBox(robot_right_ear_, lv_color_hex(0x222844), lv_color_hex(0xe166ff), 3, 12);
+    robot_mouth_ = lv_obj_create(robot_avatar_);
+    StyleBox(robot_mouth_, lv_color_hex(0x55efff), lv_color_hex(0x55efff), 0, 16);
 
-    robot_head_ = lv_obj_create(robot_avatar_);
-    lv_obj_set_size(robot_head_, 94, 72);
-    lv_obj_set_pos(robot_head_, 12, 18);
-    StyleBox(robot_head_, lv_color_hex(0xc7d9c7), lv_color_hex(0x02040a), 2, 8);
-
-    robot_screen_ = lv_obj_create(robot_head_);
-    lv_obj_set_size(robot_screen_, 76, 48);
-    lv_obj_set_pos(robot_screen_, 9, 13);
-    StyleBox(robot_screen_, lv_color_hex(0x111832), lv_color_hex(0x23e7ff), 2, 4);
-
-    robot_left_brow_ = CreateBar(robot_screen_, 14, 11, 19, 4, lv_color_hex(0x55efff));
-    robot_right_brow_ = CreateBar(robot_screen_, 43, 11, 19, 4, lv_color_hex(0x55efff));
-
-    robot_left_eye_ = lv_obj_create(robot_screen_);
-    lv_obj_set_size(robot_left_eye_, 18, 15);
-    lv_obj_set_pos(robot_left_eye_, 15, 21);
-    StyleBox(robot_left_eye_, lv_color_hex(0x55efff), lv_color_hex(0x55efff), 0, 8);
-
-    robot_right_eye_ = lv_obj_create(robot_screen_);
-    lv_obj_set_size(robot_right_eye_, 18, 15);
-    lv_obj_set_pos(robot_right_eye_, 43, 21);
-    StyleBox(robot_right_eye_, lv_color_hex(0x55efff), lv_color_hex(0x55efff), 0, 8);
-
-    robot_mouth_ = CreateBar(robot_screen_, 29, 39, 18, 3, lv_color_hex(0x55efff));
-
-    robot_badge_label_ = lv_label_create(robot_screen_);
-    lv_obj_set_style_text_font(robot_badge_label_, &font_awesome_30_4, 0);
-    lv_obj_set_style_text_color(robot_badge_label_, lv_color_hex(0x55efff), 0);
-    lv_obj_align(robot_badge_label_, LV_ALIGN_CENTER, 0, 0);
-    lv_label_set_text(robot_badge_label_, "");
-    lv_obj_add_flag(robot_badge_label_, LV_OBJ_FLAG_HIDDEN);
-
-    CreateBar(robot_head_, 18, 64, 10, 4, lv_color_hex(0xe166ff));
-    CreateBar(robot_head_, 66, 64, 10, 4, lv_color_hex(0x23e7ff));
     ApplyRobotEmotion("neutral");
+
+    const esp_timer_create_args_t robot_timer_args = {
+        .callback = [](void* arg) {
+            auto display = static_cast<LcdDisplay*>(arg);
+            if (display->Lock(0)) {
+                display->UpdateRobotAvatar();
+                display->Unlock();
+            }
+        },
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "robot_face",
+        .skip_unhandled_events = true,
+    };
+
+    if (esp_timer_create(&robot_timer_args, &robot_timer_) == ESP_OK) {
+        esp_timer_start_periodic(robot_timer_, 180000);
+    }
 }
 
 void LcdDisplay::ApplyRobotEmotion(const char* emotion) {
-    if (robot_screen_ == nullptr) {
+    if (robot_avatar_ == nullptr) {
         return;
     }
 
-    robot_emotion_ = emotion == nullptr ? "neutral" : emotion;
-    lv_obj_add_flag(robot_badge_label_, LV_OBJ_FLAG_HIDDEN);
-
-    int left_eye_x = 15;
-    int right_eye_x = 43;
-    int eye_y = 21;
-    int eye_w = 18;
-    int eye_h = 15;
-    int left_brow_x = 14;
-    int right_brow_x = 43;
-    int left_brow_y = 11;
-    int right_brow_y = 11;
-    int brow_w = 19;
-    int brow_h = 4;
-    int mouth_w = 18;
-    int mouth_h = 3;
-    int mouth_x = 29;
-    int mouth_y = 39;
-    lv_color_t face = lv_color_hex(0x55efff);
-    lv_color_t accent = lv_color_hex(0x23e7ff);
-
-    std::string_view e(robot_emotion_);
-    if (e == "happy" || e == "laughing" || e == "funny" || e == "loving") {
-        eye_y = 23;
-        eye_h = 6;
-        left_brow_y = 9;
-        right_brow_y = 9;
-        mouth_w = 28;
-        mouth_h = 4;
-        mouth_x = 24;
-        mouth_y = 38;
-        face = lv_color_hex(0x79ffb2);
-        accent = lv_color_hex(0xe166ff);
-    } else if (e == "sad" || e == "crying") {
-        eye_y = 24;
-        eye_h = 7;
-        left_brow_y = 16;
-        right_brow_y = 16;
-        mouth_w = 14;
-        mouth_x = 31;
-        mouth_y = 41;
-        face = lv_color_hex(0x7cc8ff);
-    } else if (e == "angry") {
-        eye_y = 24;
-        eye_h = 8;
-        left_eye_x = 17;
-        right_eye_x = 41;
-        left_brow_x = 18;
-        right_brow_x = 39;
-        left_brow_y = 15;
-        right_brow_y = 15;
-        brow_w = 18;
-        mouth_w = 22;
-        mouth_x = 27;
-        mouth_y = 39;
-        face = lv_color_hex(0xff5d6c);
-        accent = lv_color_hex(0xff5d6c);
-    } else if (e == "surprised" || e == "shocked") {
-        eye_y = 19;
-        eye_w = 17;
-        eye_h = 17;
-        left_brow_y = 7;
-        right_brow_y = 7;
-        mouth_w = 10;
-        mouth_h = 8;
-        mouth_x = 34;
-        mouth_y = 38;
-    } else if (e == "thinking" || e == "confused") {
-        left_eye_x = 17;
-        right_eye_x = 42;
-        eye_h = 12;
-        left_brow_y = 9;
-        right_brow_y = 15;
-        mouth_w = 12;
-        mouth_x = 32;
-        face = lv_color_hex(0x9bdcff);
-    } else if (e == "cool" || e == "confident") {
-        eye_y = 23;
-        eye_h = 5;
-        brow_w = 22;
-        mouth_w = 18;
-        mouth_x = 29;
-    } else if (e == "sleepy" || e == "relaxed") {
-        eye_y = 26;
-        eye_h = 4;
-        left_brow_y = 13;
-        right_brow_y = 13;
-        mouth_w = 20;
-        mouth_x = 28;
+    std::string_view next_emotion(emotion == nullptr ? "neutral" : emotion);
+    if (next_emotion == "speaking") {
+        robot_speaking_ = true;
+    } else {
+        robot_emotion_.assign(next_emotion.data(), next_emotion.size());
+        if (next_emotion == "neutral" || next_emotion == "sleepy" || next_emotion == "relaxed") {
+            robot_speaking_ = false;
+        }
     }
-
-    lv_obj_set_size(robot_left_eye_, eye_w, eye_h);
-    lv_obj_set_size(robot_right_eye_, eye_w, eye_h);
-    lv_obj_set_pos(robot_left_eye_, left_eye_x, eye_y);
-    lv_obj_set_pos(robot_right_eye_, right_eye_x, eye_y);
-    lv_obj_set_style_bg_color(robot_left_eye_, face, 0);
-    lv_obj_set_style_bg_color(robot_right_eye_, face, 0);
-    lv_obj_set_style_bg_color(robot_mouth_, face, 0);
-    lv_obj_set_style_bg_color(robot_left_brow_, accent, 0);
-    lv_obj_set_style_bg_color(robot_right_brow_, accent, 0);
-    lv_obj_set_style_bg_opa(robot_left_eye_, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_opa(robot_right_eye_, LV_OPA_COVER, 0);
-    lv_obj_set_size(robot_left_brow_, brow_w, brow_h);
-    lv_obj_set_size(robot_right_brow_, brow_w, brow_h);
-    lv_obj_set_pos(robot_left_brow_, left_brow_x, left_brow_y);
-    lv_obj_set_pos(robot_right_brow_, right_brow_x, right_brow_y);
-    lv_obj_set_size(robot_mouth_, mouth_w, mouth_h);
-    lv_obj_set_pos(robot_mouth_, mouth_x, mouth_y);
+    UpdateRobotAvatar();
 }
 
 void LcdDisplay::Update() {
     Display::Update();
-
-    DisplayLockGuard lock(this);
-    UpdateRobotAvatar();
 }
 
 void LcdDisplay::UpdateRobotAvatar() {
@@ -485,39 +369,87 @@ void LcdDisplay::UpdateRobotAvatar() {
         return;
     }
 
-    robot_phase_ = (robot_phase_ + 1) % 12;
-    const bool bright = robot_phase_ < 6;
-    const int breath = (robot_phase_ == 2 || robot_phase_ == 3) ? -1 :
-                       (robot_phase_ == 8 || robot_phase_ == 9) ? 1 : 0;
-    const int gaze = (robot_phase_ >= 2 && robot_phase_ <= 4) ? -1 :
-                     (robot_phase_ >= 7 && robot_phase_ <= 8) ? 1 : 0;
-    const lv_color_t cyan = bright ? lv_color_hex(0x55efff) : lv_color_hex(0x1abbd8);
-    const lv_color_t violet = bright ? lv_color_hex(0xe166ff) : lv_color_hex(0x8d3fd8);
-
-    lv_obj_set_style_border_color(robot_band_, violet, 0);
-    lv_obj_set_style_border_color(robot_left_ear_, cyan, 0);
-    lv_obj_set_style_border_color(robot_right_ear_, violet, 0);
-    lv_obj_set_style_border_color(robot_screen_, cyan, 0);
-
-    lv_obj_set_pos(robot_band_, 15, breath);
-    lv_obj_set_pos(robot_left_ear_, 2, 33 - breath);
-    lv_obj_set_pos(robot_right_ear_, 92, 33 - breath);
-    lv_obj_set_pos(robot_head_, 12, 18 + breath);
+    robot_phase_ = (robot_phase_ + 1) % 48;
+    const int face_w = lv_obj_get_width(robot_avatar_);
+    const int face_h = lv_obj_get_height(robot_avatar_);
 
     std::string_view emotion(robot_emotion_);
-    const bool idle_face = emotion == "neutral" || emotion == "relaxed" || emotion == "sleepy";
-    if (idle_face) {
-        const bool blink = robot_phase_ == 10;
-        const int eye_h = blink ? 3 : (emotion == "sleepy" ? 4 : 15);
-        const int eye_y = blink ? 28 : (emotion == "sleepy" ? 26 : 21);
-        lv_obj_set_size(robot_left_eye_, 18, eye_h);
-        lv_obj_set_size(robot_right_eye_, 18, eye_h);
-        lv_obj_set_pos(robot_left_eye_, 15 + gaze, eye_y);
-        lv_obj_set_pos(robot_right_eye_, 43 + gaze, eye_y);
-        lv_obj_set_pos(robot_left_brow_, 14 + gaze, emotion == "sleepy" ? 13 : 11);
-        lv_obj_set_pos(robot_right_brow_, 43 + gaze, emotion == "sleepy" ? 13 : 11);
-        lv_obj_set_pos(robot_mouth_, blink ? 32 : 29, 39 + (breath > 0 ? 1 : 0));
+    lv_color_t face = lv_color_hex(0x55efff);
+    if (emotion == "happy" || emotion == "laughing" || emotion == "funny" || emotion == "loving") {
+        face = lv_color_hex(0x79ffb2);
+    } else if (emotion == "sad" || emotion == "crying") {
+        face = lv_color_hex(0x7cc8ff);
+    } else if (emotion == "angry") {
+        face = lv_color_hex(0xff5d6c);
+    } else if (emotion == "thinking" || emotion == "confused") {
+        face = lv_color_hex(0x9bdcff);
     }
+
+    const bool bright = (robot_phase_ % 14) < 9;
+    if (!bright && emotion == "neutral") {
+        face = lv_color_hex(0x22cde9);
+    }
+
+    const int gaze = (robot_phase_ >= 7 && robot_phase_ <= 15) ? -4 :
+                     (robot_phase_ >= 28 && robot_phase_ <= 36) ? 4 : 0;
+    const bool blink = !robot_speaking_ && (robot_phase_ == 18 || robot_phase_ == 19 || robot_phase_ == 43);
+    const bool sleepy = emotion == "sleepy" || emotion == "relaxed";
+    const int scaled_gaze = gaze * std::max(face_w, 160) / 112;
+    int eye_w = face_w * 24 / 100;
+    int eye_h = blink ? std::max(face_h * 4 / 100, 5) : (sleepy ? face_h * 7 / 100 : face_h * 28 / 100);
+    int eye_y = blink ? face_h * 31 / 100 : (sleepy ? face_h * 30 / 100 : face_h * 18 / 100);
+    int left_eye_x = face_w * 18 / 100 + scaled_gaze;
+    int right_eye_x = face_w * 58 / 100 + scaled_gaze;
+    int mouth_w = face_w * 24 / 100;
+    int mouth_h = std::max(face_h * 4 / 100, 5);
+    int mouth_y = face_h * 73 / 100;
+
+    if (robot_speaking_) {
+        const int talk_frame = robot_phase_ % 6;
+        mouth_w = (talk_frame == 0 || talk_frame == 3) ? face_w * 22 / 100 :
+                  (talk_frame == 1 || talk_frame == 4) ? face_w * 34 / 100 : face_w * 28 / 100;
+        mouth_h = (talk_frame == 0 || talk_frame == 3) ? face_h * 5 / 100 :
+                  (talk_frame == 1 || talk_frame == 4) ? face_h * 14 / 100 : face_h * 19 / 100;
+        mouth_y = face_h * 70 / 100 - mouth_h / 5;
+    } else if (emotion == "happy" || emotion == "laughing" || emotion == "funny" || emotion == "loving") {
+        eye_h = blink ? std::max(face_h * 4 / 100, 5) : face_h * 13 / 100;
+        eye_y = blink ? face_h * 31 / 100 : face_h * 25 / 100;
+        mouth_w = face_w * 42 / 100;
+        mouth_h = std::max(face_h * 5 / 100, 6);
+    } else if (emotion == "surprised" || emotion == "shocked") {
+        eye_w = face_w * 26 / 100;
+        eye_h = blink ? std::max(face_h * 4 / 100, 5) : face_h * 30 / 100;
+        eye_y = blink ? face_h * 31 / 100 : face_h * 17 / 100;
+        mouth_w = face_w * 17 / 100;
+        mouth_h = face_h * 18 / 100;
+        mouth_y = face_h * 66 / 100;
+    } else if (emotion == "sad" || emotion == "crying") {
+        eye_h = blink ? std::max(face_h * 4 / 100, 5) : face_h * 12 / 100;
+        eye_y = blink ? face_h * 31 / 100 : face_h * 30 / 100;
+        mouth_w = face_w * 24 / 100;
+        mouth_h = std::max(face_h * 4 / 100, 5);
+        mouth_y = face_h * 76 / 100;
+    } else if (emotion == "angry") {
+        eye_w = face_w * 27 / 100;
+        eye_h = blink ? std::max(face_h * 4 / 100, 5) : face_h * 10 / 100;
+        eye_y = blink ? face_h * 31 / 100 : face_h * 30 / 100;
+        mouth_w = face_w * 30 / 100;
+        mouth_h = std::max(face_h * 4 / 100, 5);
+    }
+
+    const int mouth_x = (face_w - mouth_w) / 2;
+    lv_obj_set_size(robot_left_eye_, eye_w, eye_h);
+    lv_obj_set_size(robot_right_eye_, eye_w, eye_h);
+    lv_obj_set_pos(robot_left_eye_, left_eye_x, eye_y);
+    lv_obj_set_pos(robot_right_eye_, right_eye_x, eye_y);
+    lv_obj_set_style_bg_color(robot_left_eye_, face, 0);
+    lv_obj_set_style_bg_color(robot_right_eye_, face, 0);
+    lv_obj_set_style_bg_color(robot_mouth_, face, 0);
+    lv_obj_set_style_radius(robot_left_eye_, std::min(eye_w, eye_h) / 2, 0);
+    lv_obj_set_style_radius(robot_right_eye_, std::min(eye_w, eye_h) / 2, 0);
+    lv_obj_set_style_radius(robot_mouth_, std::min(mouth_w, mouth_h) / 2, 0);
+    lv_obj_set_size(robot_mouth_, mouth_w, mouth_h);
+    lv_obj_set_pos(robot_mouth_, mouth_x, mouth_y);
 }
 
 void LcdDisplay::SetEmotion(const char* emotion) {
@@ -559,7 +491,7 @@ void LcdDisplay::SetEmotion(const char* emotion) {
         {"🙄", "confused"}
     };
     
-    // 查找匹配的表情
+    // 查找匹配的表�?
     std::string_view emotion_view(emotion);
     auto it = std::find_if(emotions.begin(), emotions.end(),
         [&emotion_view](const Emotion& e) { return e.text == emotion_view; });
@@ -578,20 +510,22 @@ void LcdDisplay::SetEmotion(const char* emotion) {
     }
 }
 
-void LcdDisplay::SetIcon(const char* icon) {
-    {
-        DisplayLockGuard lock(this);
-        if (robot_badge_label_ != nullptr) {
-            ApplyRobotEmotion("surprised");
-            lv_obj_clear_flag(robot_badge_label_, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_set_style_text_font(robot_badge_label_, &font_awesome_30_4, 0);
-            lv_obj_set_style_text_color(robot_badge_label_, lv_color_hex(0x55efff), 0);
-            lv_obj_align(robot_badge_label_, LV_ALIGN_CENTER, 0, 0);
-            lv_label_set_text(robot_badge_label_, icon);
-            return;
-        }
+void LcdDisplay::SetChatMessage(const char* role, const char* content) {
+    DisplayLockGuard lock(this);
+    if (chat_message_label_ != nullptr) {
+        lv_label_set_text(chat_message_label_, "");
+        lv_obj_add_flag(chat_message_label_, LV_OBJ_FLAG_HIDDEN);
     }
 
+    if (role != nullptr && std::string_view(role) == "assistant" && content != nullptr && content[0] != '\0') {
+        robot_speaking_ = true;
+    } else if (role != nullptr && (std::string_view(role) == "system" || std::string_view(role) == "user")) {
+        robot_speaking_ = false;
+    }
+    UpdateRobotAvatar();
+}
+
+void LcdDisplay::SetIcon(const char* icon) {
     DisplayLockGuard lock(this);
     if (emotion_label_ == nullptr) {
         return;

@@ -1,4 +1,4 @@
-#include "internet_radio.h"
+﻿#include "internet_radio.h"
 
 #include "application.h"
 #include "esp_mp3_dec.h"
@@ -414,28 +414,32 @@ int MixToMonoAndResample(const int16_t* src, int sample_count, int channels, int
     return out_len;
 }
 
+std::string NormalizeStationText(const std::string& text) {
+    std::string normalized;
+    normalized.reserve(text.size());
+    for (unsigned char ch : text) {
+        if (std::isspace(ch)) {
+            continue;
+        }
+        normalized.push_back(static_cast<char>(std::tolower(ch)));
+    }
+    return normalized;
+}
+
 }  // namespace
 
 InternetRadio::~InternetRadio() {
     Stop();
-    if (pcm_ring_ != nullptr) {
-        vRingbufferDelete(pcm_ring_);
-        pcm_ring_ = nullptr;
-    }
-    if (ring_struct_ != nullptr) {
-        heap_caps_free(ring_struct_);
-        ring_struct_ = nullptr;
-    }
-    if (ring_storage_ != nullptr) {
-        heap_caps_free(ring_storage_);
-        ring_storage_ = nullptr;
-    }
 }
 
 void InternetRadio::Start(Display* display, AudioCodec* codec) {
     if (running_ || display == nullptr || codec == nullptr) {
         return;
     }
+
+    custom_stream_ = false;
+    custom_url_.clear();
+    custom_title_.clear();
 
     EnsureStationsLoaded();
     if (StationCount() <= 0) {
@@ -451,25 +455,9 @@ void InternetRadio::Start(Display* display, AudioCodec* codec) {
     bitrate_kbps_ = 0;
     sample_rate_ = 0;
     channels_ = 0;
-    FlushPcmRing();
-
-    if (ring_struct_ == nullptr) {
-        ring_struct_ = static_cast<StaticRingbuffer_t*>(heap_caps_malloc(sizeof(StaticRingbuffer_t),
-                                                                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-    }
-    if (ring_storage_ == nullptr) {
-        ring_storage_ = static_cast<uint8_t*>(heap_caps_malloc(kPcmRingBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    }
-    if (pcm_ring_ == nullptr && ring_struct_ != nullptr && ring_storage_ != nullptr) {
-        pcm_ring_ = xRingbufferCreateStatic(kPcmRingBytes, RINGBUF_TYPE_BYTEBUF, ring_storage_, ring_struct_);
-    }
-    if (pcm_ring_ == nullptr) {
-        ESP_LOGE(TAG, "Failed to allocate PCM ring buffer");
-        return;
-    }
 
     StopVoiceSession();
-    codec_->EnableInput(false);
+    codec_->EnableInput(true);
     codec_->EnableOutput(true);
     output_chunk_.reserve(2048);
 
@@ -477,16 +465,72 @@ void InternetRadio::Start(Display* display, AudioCodec* codec) {
     SetState(State::kConnecting);
     CreateUi();
 
-    if (xTaskCreate(&InternetRadio::StreamTaskEntry, "internet_radio", 12288, this, 5, &stream_task_) != pdPASS) {
+    if (xTaskCreate(&InternetRadio::StreamTaskEntry, "internet_radio", 8192, this, 5, &stream_task_) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create stream task");
         running_ = false;
         DestroyUi();
         return;
     }
-    if (xTaskCreate(&InternetRadio::PlayTaskEntry, "radio_play", 4096, this, 6, &play_task_) != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create play task");
-        running_ = false;
+}
+
+void InternetRadio::Start(Display* display, AudioCodec* codec, const std::string& station_name) {
+    EnsureStationsLoaded();
+    SelectStationByName(station_name);
+    Start(display, codec);
+}
+
+void InternetRadio::StartUrl(Display* display, AudioCodec* codec, const std::string& url, const std::string& title) {
+    if (running_ || display == nullptr || codec == nullptr || url.empty()) {
+        return;
     }
+
+    custom_stream_ = true;
+    custom_url_ = url;
+    custom_title_ = title.empty() ? "NetEase Music" : title;
+
+    display_ = display;
+    codec_ = codec;
+    paused_ = false;
+    reconnect_now_ = false;
+    bitrate_kbps_ = 0;
+    sample_rate_ = 0;
+    channels_ = 0;
+
+    StopVoiceSession();
+    codec_->EnableInput(true);
+    codec_->EnableOutput(true);
+    output_chunk_.reserve(2048);
+
+    running_ = true;
+    SetState(State::kConnecting);
+    CreateUi();
+
+    if (xTaskCreate(&InternetRadio::StreamTaskEntry, "music_stream", 8192, this, 5, &stream_task_) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create music stream task");
+        running_ = false;
+        DestroyUi();
+        custom_stream_ = false;
+        custom_url_.clear();
+        custom_title_.clear();
+        return;
+    }
+}
+
+std::string InternetRadio::GetStationCatalog() {
+    EnsureStationsLoaded();
+    std::string catalog;
+    for (int i = 0; i < StationCount(); ++i) {
+        const auto& station = CurrentStation(i);
+        if (!catalog.empty()) {
+            catalog += ", ";
+        }
+        catalog += station.name;
+        if (catalog.size() > 900) {
+            catalog += "...";
+            break;
+        }
+    }
+    return catalog;
 }
 
 void InternetRadio::Stop() {
@@ -500,26 +544,24 @@ void InternetRadio::Stop() {
         esp_http_client_close(current_client_);
     }
 
-    for (int i = 0; i < 20 && (stream_task_ != nullptr || play_task_ != nullptr); ++i) {
+    for (int i = 0; i < 20 && stream_task_ != nullptr; ++i) {
         vTaskDelay(pdMS_TO_TICKS(50));
     }
     if (stream_task_ != nullptr) {
         vTaskDelete(stream_task_);
         stream_task_ = nullptr;
     }
-    if (play_task_ != nullptr) {
-        vTaskDelete(play_task_);
-        play_task_ = nullptr;
-    }
 
     if (codec_ != nullptr) {
         codec_->EnableOutput(false);
         codec_->EnableInput(true);
     }
-    FlushPcmRing();
     DestroyUi();
     display_ = nullptr;
     codec_ = nullptr;
+    custom_stream_ = false;
+    custom_url_.clear();
+    custom_title_.clear();
     SetState(State::kIdle);
 }
 
@@ -576,10 +618,11 @@ void InternetRadio::CreateUi() {
     const int text_w = std::max(40, w - margin * 2);
     const bool compact = h < 150;
 
-    title_label_ = AddLabel(layer_, margin, compact ? 2 : 4, text_w, "RADIO", 0x38bdf8);
+    title_label_ = AddLabel(layer_, margin, compact ? 2 : 4, text_w, custom_stream_ ? "MUSIC" : "RADIO", 0x38bdf8);
     wifi_label_ = AddLabel(layer_, margin, 24, text_w, "WiFi: ...", 0x94a3b8);
-    index_label_ = AddLabel(layer_, margin, compact ? 20 : 43, text_w, "Station 1/6", 0xffd166);
-    name_label_ = AddLabel(layer_, margin, compact ? 38 : 62, text_w, CurrentStation(station_index_).name.c_str(), 0xf8fafc);
+    index_label_ = AddLabel(layer_, margin, compact ? 20 : 43, text_w, custom_stream_ ? "MCP Music" : "Station 1/6", 0xffd166);
+    const char* name = custom_stream_ ? custom_title_.c_str() : CurrentStation(station_index_).name.c_str();
+    name_label_ = AddLabel(layer_, margin, compact ? 38 : 62, text_w, name, 0xf8fafc);
     status_label_ = AddLabel(layer_, margin, compact ? 56 : 84, text_w, "Connecting", 0xfacc15);
     info_label_ = AddLabel(layer_, margin, compact ? 74 : 105, text_w, "MP3 direct stream", 0x94a3b8);
     next_label_ = AddLabel(layer_, margin, 126, text_w, "GPIO39 next", 0x94a3b8);
@@ -622,7 +665,7 @@ void InternetRadio::DestroyUi() {
 }
 
 void InternetRadio::UpdateUi() {
-    if (display_ == nullptr || layer_ == nullptr || StationCount() <= 0) {
+    if (display_ == nullptr || layer_ == nullptr || (!custom_stream_ && StationCount() <= 0)) {
         return;
     }
 
@@ -637,10 +680,18 @@ void InternetRadio::UpdateUi() {
     lv_label_set_text(wifi_label_, WifiStation::GetInstance().IsConnected() ? "WiFi: Connected" : "WiFi: Offline");
 
     char index_text[24];
-    snprintf(index_text, sizeof(index_text), compact ? "%d/%d" : "Station %d/%d", station_index_ + 1, StationCount());
+    if (custom_stream_) {
+        snprintf(index_text, sizeof(index_text), "MCP Music");
+    } else {
+        snprintf(index_text, sizeof(index_text), compact ? "%d/%d" : "Station %d/%d", station_index_ + 1, StationCount());
+    }
     lv_label_set_text(index_label_, index_text);
-    const RadioStation& station = CurrentStation(station_index_);
-    lv_label_set_text(name_label_, station.name.c_str());
+    if (custom_stream_) {
+        lv_label_set_text(name_label_, custom_title_.c_str());
+    } else {
+        const RadioStation& station = CurrentStation(station_index_);
+        lv_label_set_text(name_label_, station.name.c_str());
+    }
 
     const char* status = "Idle";
     uint32_t color = 0x94a3b8;
@@ -674,13 +725,13 @@ void InternetRadio::UpdateUi() {
     char info_text[40];
     if (state_ == State::kHlsUnsupported) {
         snprintf(info_text, sizeof(info_text), "Need AAC/TS decoder");
-    } else if (station.type == RadioStation::StreamType::kHlsM3u8) {
+    } else if (!custom_stream_ && CurrentStation(station_index_).type == RadioStation::StreamType::kHlsM3u8) {
         snprintf(info_text, sizeof(info_text), "HLS m3u8");
     } else if (sample_rate_ > 0) {
         snprintf(info_text, sizeof(info_text), "%dk %s %dkbps", sample_rate_ / 1000,
                  channels_ > 1 ? "stereo" : "mono", bitrate_kbps_);
     } else {
-        snprintf(info_text, sizeof(info_text), "MP3 direct stream");
+        snprintf(info_text, sizeof(info_text), custom_stream_ ? "MP3 music stream" : "MP3 direct stream");
     }
     lv_label_set_text(info_label_, info_text);
 }
@@ -690,7 +741,59 @@ void InternetRadio::SetState(State state) {
     UpdateUi();
 }
 
+bool InternetRadio::SelectStationByName(const std::string& station_name) {
+    if (station_name.empty()) {
+        return false;
+    }
+    EnsureStationsLoaded();
+    if (StationCount() <= 0) {
+        return false;
+    }
+
+    const std::string query = NormalizeStationText(station_name);
+    if (query.empty()) {
+        return false;
+    }
+
+    int matched_index = -1;
+    for (int i = 0; i < StationCount(); ++i) {
+        const auto& station = CurrentStation(i);
+        const std::string name = NormalizeStationText(station.name);
+        const std::string category = NormalizeStationText(station.category);
+        if (name == query || name.find(query) != std::string::npos || query.find(name) != std::string::npos ||
+            category.find(query) != std::string::npos) {
+            matched_index = i;
+            break;
+        }
+    }
+
+    if (matched_index < 0) {
+        ESP_LOGW(TAG, "Station not found by name: %s", station_name.c_str());
+        return false;
+    }
+
+    station_index_ = matched_index;
+    if (running_) {
+        paused_ = false;
+        bitrate_kbps_ = 0;
+        sample_rate_ = 0;
+        channels_ = 0;
+        reconnect_now_ = true;
+        if (codec_ != nullptr) {
+            codec_->EnableOutput(true);
+        }
+        if (current_client_ != nullptr) {
+            esp_http_client_close(current_client_);
+        }
+        SetState(State::kConnecting);
+    }
+    return true;
+}
+
 void InternetRadio::SwitchStation(int delta) {
+    if (custom_stream_) {
+        return;
+    }
     if (StationCount() <= 0) {
         return;
     }
@@ -700,7 +803,6 @@ void InternetRadio::SwitchStation(int delta) {
     sample_rate_ = 0;
     channels_ = 0;
     reconnect_now_ = true;
-    FlushPcmRing();
     if (codec_ != nullptr) {
         codec_->EnableOutput(true);
     }
@@ -708,17 +810,6 @@ void InternetRadio::SwitchStation(int delta) {
         esp_http_client_close(current_client_);
     }
     SetState(State::kConnecting);
-}
-
-void InternetRadio::FlushPcmRing() {
-    if (pcm_ring_ == nullptr) {
-        return;
-    }
-    size_t size = 0;
-    void* item = nullptr;
-    while ((item = xRingbufferReceive(pcm_ring_, &size, 0)) != nullptr) {
-        vRingbufferReturnItem(pcm_ring_, item);
-    }
 }
 
 void InternetRadio::StopVoiceSession() {
@@ -734,30 +825,6 @@ void InternetRadio::StopVoiceSession() {
 
 void InternetRadio::StreamTaskEntry(void* arg) {
     static_cast<InternetRadio*>(arg)->StreamLoop();
-}
-
-void InternetRadio::PlayTaskEntry(void* arg) {
-    static_cast<InternetRadio*>(arg)->PlayLoop();
-}
-
-void InternetRadio::PlayLoop() {
-    ESP_LOGI(TAG, "play task started");
-    while (running_) {
-        size_t rx_size = 0;
-        auto* item = static_cast<uint8_t*>(xRingbufferReceiveUpTo(pcm_ring_, &rx_size, pdMS_TO_TICKS(50), 4096));
-        if (item == nullptr || rx_size == 0) {
-            continue;
-        }
-
-        if (!paused_ && codec_ != nullptr) {
-            const size_t samples = rx_size / sizeof(int16_t);
-            output_chunk_.assign(reinterpret_cast<int16_t*>(item), reinterpret_cast<int16_t*>(item) + samples);
-            codec_->OutputData(output_chunk_);
-        }
-        vRingbufferReturnItem(pcm_ring_, item);
-    }
-    play_task_ = nullptr;
-    vTaskDelete(nullptr);
 }
 
 void InternetRadio::StreamLoop() {
@@ -782,18 +849,27 @@ void InternetRadio::StreamLoop() {
             continue;
         }
 
-        if (StationCount() <= 0) {
+        if (!custom_stream_ && StationCount() <= 0) {
             SetState(State::kError);
             vTaskDelay(pdMS_TO_TICKS(2000));
             continue;
         }
-        station_index_ = std::max(0, std::min(station_index_, StationCount() - 1));
-        const RadioStation& station = CurrentStation(station_index_);
+        RadioStation custom_station;
+        if (custom_stream_) {
+            custom_station.name = custom_title_;
+            custom_station.category = "MCP";
+            custom_station.urls[0] = custom_url_;
+            custom_station.type = RadioStation::StreamType::kMp3Direct;
+        } else {
+            station_index_ = std::max(0, std::min(station_index_, StationCount() - 1));
+        }
+        const RadioStation& station = custom_stream_ ? custom_station : CurrentStation(station_index_);
+        const int active_index = custom_stream_ ? 0 : station_index_;
+        const int active_count = custom_stream_ ? 1 : StationCount();
         ESP_LOGI(TAG, "station=%d/%d name=%s category=%s stream_type=%s",
-                 station_index_ + 1, StationCount(), station.name.c_str(), station.category.c_str(),
+                 active_index + 1, active_count, station.name.c_str(), station.category.c_str(),
                  StreamTypeName(station.type));
         if (station.type == RadioStation::StreamType::kHlsM3u8) {
-            FlushPcmRing();
             if (codec_ != nullptr) {
                 codec_->EnableOutput(false);
             }
@@ -816,14 +892,14 @@ void InternetRadio::StreamLoop() {
             }
             const char* url = url_string.c_str();
 
-            const Mp3ProbeResult probe = ProbeMp3Station(station, url, station_index_, StationCount(), url_index);
+            const Mp3ProbeResult probe = ProbeMp3Station(station, url, active_index, active_count, url_index);
             if (!probe.ok) {
                 continue;
             }
 
             ESP_LOGI(TAG, "opening station=%d/%d name=%s category=%s selected_url=%s using_fallback=%s "
-                          "HTTP status=%d content-type=%s stream_type=%s",
-                     station_index_ + 1, StationCount(), station.name.c_str(), station.category.c_str(), url,
+                     "HTTP status=%d content-type=%s stream_type=%s",
+                     active_index + 1, active_count, station.name.c_str(), station.category.c_str(), url,
                      url_index > 0 ? "yes" : "no", probe.status_code,
                      probe.content_type[0] ? probe.content_type : "(none)", StreamTypeName(station.type));
             esp_http_client_config_t config = {};
@@ -954,7 +1030,11 @@ void InternetRadio::StreamLoop() {
                         if (state_ != State::kPlaying) {
                             SetState(State::kPlaying);
                         }
-                        xRingbufferSend(pcm_ring_, resample_buffer, out_len * sizeof(int16_t), pdMS_TO_TICKS(100));
+                        if (!paused_ && codec_ != nullptr) {
+                            output_chunk_.assign(resample_buffer, resample_buffer + out_len);
+                            codec_->EnableOutput(true);
+                            codec_->OutputData(output_chunk_);
+                        }
                     }
                 }
 
@@ -978,7 +1058,6 @@ void InternetRadio::StreamLoop() {
                 current_client_ = nullptr;
             }
             esp_http_client_cleanup(client);
-            FlushPcmRing();
             if (codec_ != nullptr) {
                 codec_->EnableOutput(false);
             }
@@ -988,6 +1067,9 @@ void InternetRadio::StreamLoop() {
                 break;
             }
             if (decoded_frame_count > 0) {
+                if (custom_stream_) {
+                    running_ = false;
+                }
                 played_or_interrupted = true;
                 break;
             }

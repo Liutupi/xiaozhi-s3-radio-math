@@ -55,6 +55,9 @@ void Thing::Invoke(const cJSON* command) {
             if (param.required() && input_param == nullptr) {
                 throw std::runtime_error("Parameter " + param.name() + " is required");
             }
+            if (input_param == nullptr) {
+                continue;
+            }
             if (param.type() == kValueTypeNumber) {
                 param.set_number(input_param->valueint);
             } else if (param.type() == kValueTypeString) {

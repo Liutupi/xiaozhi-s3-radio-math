@@ -6,11 +6,11 @@
 
 #include <esp_http_client.h>
 #include <freertos/FreeRTOS.h>
-#include <freertos/ringbuf.h>
 #include <freertos/task.h>
 #include <lvgl.h>
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 class InternetRadio {
@@ -19,7 +19,10 @@ public:
     ~InternetRadio();
 
     void Start(Display* display, AudioCodec* codec);
+    void Start(Display* display, AudioCodec* codec, const std::string& station_name);
+    void StartUrl(Display* display, AudioCodec* codec, const std::string& url, const std::string& title);
     void Stop();
+    std::string GetStationCatalog();
     bool HandleClick();
     bool HandleDoubleClick();
     bool MoveRight();
@@ -35,20 +38,16 @@ private:
         kError,
     };
 
-    static constexpr size_t kPcmRingBytes = 64 * 1024;
-
     void CreateUi();
     void DestroyUi();
     void UpdateUi();
     void SetState(State state);
+    bool SelectStationByName(const std::string& station_name);
     void SwitchStation(int delta);
-    void FlushPcmRing();
     void StopVoiceSession();
 
     static void StreamTaskEntry(void* arg);
-    static void PlayTaskEntry(void* arg);
     void StreamLoop();
-    void PlayLoop();
 
     Display* display_ = nullptr;
     AudioCodec* codec_ = nullptr;
@@ -60,12 +59,11 @@ private:
     int bitrate_kbps_ = 0;
     int sample_rate_ = 0;
     int channels_ = 0;
+    bool custom_stream_ = false;
+    std::string custom_url_;
+    std::string custom_title_;
 
     TaskHandle_t stream_task_ = nullptr;
-    TaskHandle_t play_task_ = nullptr;
-    RingbufHandle_t pcm_ring_ = nullptr;
-    StaticRingbuffer_t* ring_struct_ = nullptr;
-    uint8_t* ring_storage_ = nullptr;
     esp_http_client_handle_t current_client_ = nullptr;
     std::vector<int16_t> output_chunk_;
 
